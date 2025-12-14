@@ -97,7 +97,7 @@
     <div class="controls">
         <button id="startBtn">Start Game</button>
         <div class="instructions">
-            Click canvas to start | Move: Arrow Keys or Mouse | Pause: P | Laser: SPACE
+            Click canvas to start | Move: Arrow Keys or Mouse | Pause: P | Laser: SPACE | Restart: S | Levels: 1-4 keys
         </div>
     </div>
 
@@ -116,6 +116,8 @@
         let lives = 3;
         let ballSpeed = 3; // Adjustable ball speed
         let ballLaunched = false; // Track if ball has been launched
+        let currentLevel = 1; // Current level number
+        let totalLevels = 4; // Total number of levels
         
         // Power-ups
         let powerUps = [];
@@ -124,10 +126,12 @@
             largeBall: { active: false, endTime: 0, originalRadius: 8 },
             smallBall: { active: false, endTime: 0, originalRadius: 8 },
             invincible: { active: false, endTime: 0 },
+            speedUp: { active: false, endTime: 0 },
             bricksMoving: false
         };
         let lasers = [];
         let balls = []; // Multiple balls support
+        let trampoline = null; // Safety net power-up
         
         // Paddle
         const paddle = {
@@ -157,7 +161,7 @@
             padding: 10,
             offsetX: 32.5,
             offsetY: 60,
-            maxOffset: 400 // Maximum downward movement (3/4 of screen height)
+            maxOffset: 300 // Maximum downward movement (half of screen height)
         };
         
         // Brick colors (rainbow effect)
@@ -175,31 +179,54 @@
         
         /* ===== FUTURE ENHANCEMENTS =====
          * 
-         * LEVEL SYSTEM:
-         * - Add level counter and progression
-         * - Increase difficulty per level (more bricks, faster ball, etc.)
-         * - Different brick layouts per level
-         * - Level completion bonus points
+         * LEVEL SYSTEM: ✓ IMPLEMENTED
+         * - 4 levels with progression
+         * - Different brick types per level
+         * - Increasing challenge
          * 
-         * BRICK TYPES TO IMPLEMENT:
-         * 1. Multi-hit bricks (require 2-3 hits to break, change color each hit)
-         * 2. Indestructible bricks (metal/stone - can't be broken)
-         * 3. Explosive bricks (destroy adjacent bricks when hit)
-         * 4. Moving bricks (drift left/right or up/down)
-         * 5. Regenerating bricks (respawn after X seconds)
-         * 6. Bonus bricks (award extra points)
-         * 7. Mystery bricks (random power-up guaranteed)
-         * 8. Speed bricks (temporarily increase ball speed when hit)
-         * 9. Portal bricks (teleport ball to random location)
-         * 10. Shield bricks (protect bricks behind them)
+         * BRICK TYPES IMPLEMENTED:
+         * 1. ✓ Standard bricks (1 hit)
+         * 2. ✓ Wall bricks (2-3 hits, change color)
+         * 3. ✓ Glowing bricks (destroy adjacent bricks in radius)
+         * 4. ✓ Invisible bricks (appear on first hit, break on second)
          * 
-         * IMPLEMENTATION NOTES:
-         * - Add 'type' and 'hits' properties to brick objects
-         * - Create separate collision handlers for special brick types
-         * - Add visual indicators (icons, animations) for special bricks
-         * - Balance spawn rates for variety without overwhelming difficulty
+         * NEW POWER-UPS:
+         * - ✓ Trampoline (safety net)
+         * - ✓ Glow Extender (spreads glowing effect)
          * 
          ================================ */
+        
+        // Level definitions
+        const levels = [
+            {
+                name: "Level 1: Classic",
+                rows: 6,
+                cols: 10,
+                speed: 3,
+                layout: 'standard'
+            },
+            {
+                name: "Level 2: Discovery",
+                rows: 7,
+                cols: 10,
+                speed: 3.5,
+                layout: 'glowing-invisible'
+            },
+            {
+                name: "Level 3: Fortress",
+                rows: 8,
+                cols: 10,
+                speed: 4,
+                layout: 'walls-glowing'
+            },
+            {
+                name: "Level 4: Ultimate Challenge",
+                rows: 8,
+                cols: 10,
+                speed: 4.5,
+                layout: 'all-types'
+            }
+        ];
         
         // Audio context for sound effects
         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -291,6 +318,8 @@
             { type: 'multiplyBalls', color: '#00BFFF', symbol: '××', beneficial: true, chance: 0.02 },
             { type: 'laser', color: '#4682B4', symbol: '⚡', beneficial: true, chance: 0.05 },
             { type: 'largeBall', color: '#5F9EA0', symbol: '◉', beneficial: true, chance: 0.04 },
+            { type: 'trampoline', color: '#32CD32', symbol: '═', beneficial: true, chance: 0.03 },
+            { type: 'glowExtender', color: '#FFD700', symbol: '✧', beneficial: true, chance: 0.02 },
             // Hindering (red)
             { type: 'death', color: '#DC143C', symbol: '☠', beneficial: false, chance: 0.02 },
             { type: 'speedUp', color: '#FF4500', symbol: '»', beneficial: false, chance: 0.04 },
@@ -302,19 +331,84 @@
         // Particles for effects
         let particles = [];
         
-        // Create bricks
+        // Create bricks based on level
         function createBricks() {
             bricks = [];
-            for (let row = 0; row < brickInfo.rows; row++) {
+            const level = levels[currentLevel - 1];
+            const rows = level.rows;
+            const cols = level.cols;
+            
+            for (let row = 0; row < rows; row++) {
                 bricks[row] = [];
-                for (let col = 0; col < brickInfo.cols; col++) {
-                    bricks[row][col] = {
+                for (let col = 0; col < cols; col++) {
+                    const brick = {
                         x: col * (brickInfo.width + brickInfo.padding) + brickInfo.offsetX,
                         baseY: row * (brickInfo.height + brickInfo.padding) + brickInfo.offsetY,
                         y: row * (brickInfo.height + brickInfo.padding) + brickInfo.offsetY + brickRowOffset,
                         status: 1,
-                        color: brickColors[row]
+                        color: brickColors[row % brickColors.length],
+                        type: 'standard',
+                        hits: 1,
+                        maxHits: 1,
+                        visible: true
                     };
+                    
+                    // Apply level-specific brick types
+                    switch(level.layout) {
+                        case 'standard':
+                            // All standard bricks
+                            break;
+                            
+                        case 'glowing-invisible':
+                            // Add glowing bricks (every 5th brick in middle rows)
+                            if (row >= 2 && row <= 4 && col % 5 === 2) {
+                                brick.type = 'glowing';
+                                brick.color = '#FFD700';
+                            }
+                            // Add invisible bricks (scattered)
+                            if ((row === 1 || row === 5) && col % 3 === 1) {
+                                brick.type = 'invisible';
+                                brick.visible = false;
+                                brick.hits = 2;
+                                brick.maxHits = 2;
+                            }
+                            break;
+                            
+                        case 'walls-glowing':
+                            // Add wall bricks (top 2 rows and scattered)
+                            if (row < 2 || (row === 4 && col % 4 === 0)) {
+                                brick.type = 'wall';
+                                brick.hits = 3;
+                                brick.maxHits = 3;
+                                brick.color = '#808080';
+                            }
+                            // Add glowing bricks
+                            if (row === 3 && col % 4 === 2) {
+                                brick.type = 'glowing';
+                                brick.color = '#FFD700';
+                            }
+                            break;
+                            
+                        case 'all-types':
+                            // Mix of all brick types
+                            if (row < 2) {
+                                brick.type = 'wall';
+                                brick.hits = 3;
+                                brick.maxHits = 3;
+                                brick.color = '#808080';
+                            } else if (row === 3 && col % 3 === 1) {
+                                brick.type = 'glowing';
+                                brick.color = '#FFD700';
+                            } else if ((row === 2 || row === 5) && col % 4 === 2) {
+                                brick.type = 'invisible';
+                                brick.visible = false;
+                                brick.hits = 2;
+                                brick.maxHits = 2;
+                            }
+                            break;
+                    }
+                    
+                    bricks[row][col] = brick;
                 }
             }
         }
@@ -327,6 +421,77 @@
                         brick.y = brick.baseY + brickRowOffset;
                     }
                 });
+            });
+        }
+        
+        // Destroy adjacent bricks (glowing brick effect)
+        function destroyAdjacentBricks(row, col) {
+            const adjacentOffsets = [
+                [-1, -1], [-1, 0], [-1, 1],
+                [0, -1],           [0, 1],
+                [1, -1],  [1, 0],  [1, 1]
+            ];
+            
+            adjacentOffsets.forEach(([rowOffset, colOffset]) => {
+                const newRow = row + rowOffset;
+                const newCol = col + colOffset;
+                
+                if (bricks[newRow] && bricks[newRow][newCol]) {
+                    const adjacentBrick = bricks[newRow][newCol];
+                    if (adjacentBrick && adjacentBrick.status === 1) {
+                        adjacentBrick.status = 0;
+                        score += 10;
+                        
+                        createParticles(
+                            adjacentBrick.x + brickInfo.width / 2,
+                            adjacentBrick.y + brickInfo.height / 2,
+                            adjacentBrick.color
+                        );
+                        
+                        playBrickBreak();
+                    }
+                }
+            });
+            
+            // Update score display
+            if (document.getElementById('score')) {
+                document.getElementById('score').textContent = score;
+            }
+        }
+        
+        // Extend glowing effect to adjacent bricks
+        function extendGlowingBricks() {
+            const newGlowingBricks = [];
+            
+            bricks.forEach((row, rowIndex) => {
+                row.forEach((brick, colIndex) => {
+                    if (brick.status === 1 && brick.type === 'glowing') {
+                        // Check adjacent bricks
+                        const adjacentOffsets = [
+                            [-1, -1], [-1, 0], [-1, 1],
+                            [0, -1],           [0, 1],
+                            [1, -1],  [1, 0],  [1, 1]
+                        ];
+                        
+                        adjacentOffsets.forEach(([rowOffset, colOffset]) => {
+                            const newRow = rowIndex + rowOffset;
+                            const newCol = colIndex + colOffset;
+                            
+                            if (bricks[newRow] && bricks[newRow][newCol]) {
+                                const adjacentBrick = bricks[newRow][newCol];
+                                if (adjacentBrick.status === 1 && adjacentBrick.type !== 'glowing') {
+                                    newGlowingBricks.push({ row: newRow, col: newCol });
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+            
+            // Convert adjacent bricks to glowing
+            newGlowingBricks.forEach(({ row, col }) => {
+                bricks[row][col].type = 'glowing';
+                bricks[row][col].color = '#FFD700';
             });
         }
         
@@ -406,13 +571,48 @@
         function drawBricks() {
             bricks.forEach(row => {
                 row.forEach(brick => {
-                    if (brick.status === 1) {
+                    if (brick.status === 1 && brick.visible) {
+                        // Draw brick base
                         ctx.fillStyle = brick.color;
                         ctx.fillRect(brick.x, brick.y, brickInfo.width, brickInfo.height);
                         
                         // Add highlight
                         ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
                         ctx.fillRect(brick.x, brick.y, brickInfo.width, brickInfo.height / 3);
+                        
+                        // Special brick indicators
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        
+                        if (brick.type === 'wall') {
+                            // Show hit count
+                            ctx.fillStyle = '#fff';
+                            ctx.font = 'bold 16px Arial';
+                            ctx.fillText(brick.hits, brick.x + brickInfo.width / 2, brick.y + brickInfo.height / 2);
+                            
+                            // Add darker shade for wall
+                            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                            ctx.fillRect(brick.x, brick.y, brickInfo.width, brickInfo.height);
+                        } else if (brick.type === 'glowing') {
+                            // Glowing effect
+                            ctx.shadowBlur = 15;
+                            ctx.shadowColor = '#FFD700';
+                            ctx.fillStyle = '#FFD700';
+                            ctx.fillRect(brick.x, brick.y, brickInfo.width, brickInfo.height);
+                            ctx.shadowBlur = 0;
+                            
+                            // Star symbol
+                            ctx.fillStyle = '#fff';
+                            ctx.font = 'bold 20px Arial';
+                            ctx.fillText('✧', brick.x + brickInfo.width / 2, brick.y + brickInfo.height / 2);
+                        } else if (brick.type === 'invisible' && brick.hits === 1) {
+                            // Semi-visible after first hit
+                            ctx.fillStyle = 'rgba(200, 200, 200, 0.5)';
+                            ctx.fillRect(brick.x, brick.y, brickInfo.width, brickInfo.height);
+                            ctx.strokeStyle = '#fff';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(brick.x, brick.y, brickInfo.width, brickInfo.height);
+                        }
                     }
                 });
             });
@@ -437,6 +637,21 @@
                 ctx.textBaseline = 'middle';
                 ctx.fillText(powerUp.symbol, powerUp.x + powerUp.width / 2, powerUp.y + powerUp.height / 2);
             });
+        }
+        
+        // Draw trampoline
+        function drawTrampoline() {
+            if (trampoline) {
+                ctx.strokeStyle = '#32CD32';
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#32CD32';
+                ctx.beginPath();
+                ctx.moveTo(trampoline.x, trampoline.y);
+                ctx.lineTo(trampoline.x + trampoline.width, trampoline.y);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
         }
         
         // Draw lasers
@@ -472,34 +687,53 @@
             ctx.textAlign = 'left';
             ctx.font = 'bold 14px Arial';
             
-            if (activePowerUps.laser.active && now < activePowerUps.laser.endTime) {
-                ctx.fillStyle = '#4682B4';
-                ctx.fillText('⚡ LASER', 10, yOffset);
-                yOffset += 22;
+            // Helper function to draw indicator with fade effect
+            const drawIndicator = (text, color, endTime) => {
+                const timeLeft = endTime - now;
+                if (timeLeft > 0) {
+                    // Fade out in last second
+                    const alpha = timeLeft < 1000 ? timeLeft / 1000 : 1;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = color;
+                    ctx.fillText(text, 10, yOffset);
+                    ctx.globalAlpha = 1;
+                    yOffset += 22;
+                    return true;
+                }
+                return false;
+            };
+            
+            if (activePowerUps.laser.active) {
+                drawIndicator('⚡ LASER', '#4682B4', activePowerUps.laser.endTime);
             }
             
-            if (activePowerUps.largeBall.active && now < activePowerUps.largeBall.endTime) {
-                ctx.fillStyle = '#5F9EA0';
-                ctx.fillText('◉ LARGE BALL', 10, yOffset);
-                yOffset += 22;
+            if (activePowerUps.largeBall.active) {
+                drawIndicator('◉ LARGE BALL', '#5F9EA0', activePowerUps.largeBall.endTime);
             }
             
-            if (activePowerUps.smallBall.active && now < activePowerUps.smallBall.endTime) {
-                ctx.fillStyle = '#CD5C5C';
-                ctx.fillText('○ SMALL BALL', 10, yOffset);
-                yOffset += 22;
+            if (activePowerUps.smallBall.active) {
+                drawIndicator('○ SMALL BALL', '#CD5C5C', activePowerUps.smallBall.endTime);
             }
             
-            if (activePowerUps.invincible.active && now < activePowerUps.invincible.endTime) {
-                ctx.fillStyle = '#B22222';
-                ctx.fillText('✖ NO DESTROY', 10, yOffset);
-                yOffset += 22;
+            if (activePowerUps.invincible.active) {
+                drawIndicator('✖ NO DESTROY', '#B22222', activePowerUps.invincible.endTime);
             }
             
             if (activePowerUps.bricksMoving) {
                 ctx.fillStyle = '#FF6347';
                 ctx.fillText('↓ BRICKS MOVE', 10, yOffset);
                 yOffset += 22;
+            }
+            
+            if (trampoline) {
+                ctx.fillStyle = '#32CD32';
+                ctx.fillText('═ TRAMPOLINE', 10, yOffset);
+                yOffset += 22;
+            }
+            
+            // Show speed up if active
+            if (activePowerUps.speedUp && activePowerUps.speedUp.active) {
+                drawIndicator('» SPEED UP', '#FF4500', activePowerUps.speedUp.endTime);
             }
         }
         
@@ -622,7 +856,16 @@
             
             // Bottom wall - check if it's the last ball
             if (ball.y - ball.radius > canvas.height) {
-                if (balls.length === 0) {
+                // Check trampoline collision first
+                if (trampoline && 
+                    ball.x > trampoline.x && 
+                    ball.x < trampoline.x + trampoline.width &&
+                    ball.y > trampoline.y - 10) {
+                    
+                    ball.dy *= -1;
+                    trampoline = null; // Trampoline used up
+                    playPaddleHit();
+                } else if (balls.length === 0) {
                     // This is the last ball, lose a life
                     lives--;
                     document.getElementById('lives').textContent = lives;
@@ -701,11 +944,67 @@
                 activePowerUps.invincible.active = false;
             }
             
+            // Helper function to handle brick hit
+            const handleBrickHit = (brick, rowIndex, colIndex) => {
+                if (!brick || brick.status !== 1) return;
+                
+                if (canDestroyBricks) {
+                    // Make invisible bricks visible on first hit
+                    if (brick.type === 'invisible' && !brick.visible) {
+                        brick.visible = true;
+                        brick.hits--;
+                        playWallBounce();
+                        return;
+                    }
+                    
+                    // Decrease hits
+                    brick.hits--;
+                    
+                    // Update wall brick color based on hits remaining
+                    if (brick.type === 'wall') {
+                        if (brick.hits === 2) {
+                            brick.color = '#A0A0A0';
+                        } else if (brick.hits === 1) {
+                            brick.color = '#C0C0C0';
+                        }
+                    }
+                    
+                    // Check if brick is destroyed
+                    if (brick.hits <= 0) {
+                        brick.status = 0;
+                        score += 10;
+                        document.getElementById('score').textContent = score;
+                        
+                        playBrickBreak();
+                        
+                        createParticles(
+                            brick.x + brickInfo.width / 2,
+                            brick.y + brickInfo.height / 2,
+                            brick.color
+                        );
+                        
+                        // Glowing brick special effect
+                        if (brick.type === 'glowing') {
+                            destroyAdjacentBricks(rowIndex, colIndex);
+                        }
+                        
+                        // Spawn power-up
+                        spawnPowerUp(brick.x + brickInfo.width / 2 - 15, brick.y);
+                        
+                        // Check win condition
+                        checkLevelComplete();
+                    } else {
+                        // Brick hit but not destroyed
+                        playWallBounce();
+                    }
+                }
+            };
+            
             // Check main ball
-            bricks.forEach(row => {
-                row.forEach(brick => {
-                    if (brick.status === 1) {
-                        // Improved collision detection to prevent sticking
+            bricks.forEach((row, rowIndex) => {
+                row.forEach((brick, colIndex) => {
+                    if (brick.status === 1 && brick.visible) {
+                        // Improved collision detection
                         const ballLeft = ball.x - ball.radius;
                         const ballRight = ball.x + ball.radius;
                         const ballTop = ball.y - ball.radius;
@@ -736,25 +1035,7 @@
                                 ball.dy *= -1;
                             }
                             
-                            if (canDestroyBricks) {
-                                brick.status = 0;
-                                score += 10;
-                                document.getElementById('score').textContent = score;
-                                
-                                playBrickBreak();
-                                
-                                createParticles(
-                                    brick.x + brickInfo.width / 2,
-                                    brick.y + brickInfo.height / 2,
-                                    brick.color
-                                );
-                                
-                                spawnPowerUp(brick.x + brickInfo.width / 2 - 15, brick.y);
-                                
-                                if (score === brickInfo.rows * brickInfo.cols * 10) {
-                                    winGame();
-                                }
-                            }
+                            handleBrickHit(brick, rowIndex, colIndex);
                         }
                     }
                 });
@@ -762,9 +1043,9 @@
             
             // Check extra balls
             balls.forEach(b => {
-                bricks.forEach(row => {
-                    row.forEach(brick => {
-                        if (brick.status === 1) {
+                bricks.forEach((row, rowIndex) => {
+                    row.forEach((brick, colIndex) => {
+                        if (brick.status === 1 && brick.visible) {
                             const ballLeft = b.x - b.radius;
                             const ballRight = b.x + b.radius;
                             const ballTop = b.y - b.radius;
@@ -793,30 +1074,59 @@
                                     b.dy *= -1;
                                 }
                                 
-                                if (canDestroyBricks) {
-                                    brick.status = 0;
-                                    score += 10;
-                                    document.getElementById('score').textContent = score;
-                                    
-                                    playBrickBreak();
-                                    
-                                    createParticles(
-                                        brick.x + brickInfo.width / 2,
-                                        brick.y + brickInfo.height / 2,
-                                        brick.color
-                                    );
-                                    
-                                    spawnPowerUp(brick.x + brickInfo.width / 2 - 15, brick.y);
-                                    
-                                    if (score === brickInfo.rows * brickInfo.cols * 10) {
-                                        winGame();
-                                    }
-                                }
+                                handleBrickHit(brick, rowIndex, colIndex);
                             }
                         }
                     });
                 });
             });
+        }
+        
+        // Check if level is complete
+        function checkLevelComplete() {
+            let remainingBricks = 0;
+            bricks.forEach(row => {
+                row.forEach(brick => {
+                    if (brick.status === 1) remainingBricks++;
+                });
+            });
+            
+            if (remainingBricks === 0) {
+                if (currentLevel < totalLevels) {
+                    nextLevel();
+                } else {
+                    winGame();
+                }
+            }
+        }
+        
+        // Advance to next level
+        function nextLevel() {
+            currentLevel++;
+            gameRunning = false;
+            gamePaused = true;
+            
+            // Clear any active effects
+            balls = [];
+            powerUps = [];
+            lasers = [];
+            trampoline = null;
+            ballLaunched = false;
+            
+            // Level complete message
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('LEVEL COMPLETE!', canvas.width / 2, canvas.height / 2 - 40);
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = '24px Arial';
+            ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
+            ctx.fillText(`Lives: ${lives}`, canvas.width / 2, canvas.height / 2 + 40);
+            ctx.fillText('Press S or click Start to continue', canvas.width / 2, canvas.height / 2 + 80);
         }
         
         // Reset ball
@@ -893,7 +1203,9 @@
                     break;
                     
                 case 'speedUp':
-                    const tempSpeed = ballSpeed;
+                    activePowerUps.speedUp.active = true;
+                    activePowerUps.speedUp.endTime = now + 3000;
+                    const originalSpeed = ballSpeed;
                     ballSpeed *= 1.5;
                     ball.dx *= 1.5;
                     ball.dy *= 1.5;
@@ -902,13 +1214,16 @@
                         b.dy *= 1.5;
                     });
                     setTimeout(() => {
-                        ballSpeed = tempSpeed;
-                        ball.dx /= 1.5;
-                        ball.dy /= 1.5;
-                        balls.forEach(b => {
-                            b.dx /= 1.5;
-                            b.dy /= 1.5;
-                        });
+                        if (gameRunning) {
+                            ballSpeed = originalSpeed;
+                            ball.dx /= 1.5;
+                            ball.dy /= 1.5;
+                            balls.forEach(b => {
+                                b.dx /= 1.5;
+                                b.dy /= 1.5;
+                            });
+                            activePowerUps.speedUp.active = false;
+                        }
                     }, 3000);
                     break;
                     
@@ -925,6 +1240,18 @@
                 case 'invincible':
                     activePowerUps.invincible.active = true;
                     activePowerUps.invincible.endTime = now + 5000;
+                    break;
+                    
+                case 'trampoline':
+                    trampoline = {
+                        x: 50,
+                        y: paddle.y - 20,  // Just above paddle level
+                        width: canvas.width - 100
+                    };
+                    break;
+                    
+                case 'glowExtender':
+                    extendGlowingBricks();
                     break;
             }
         }
@@ -949,6 +1276,7 @@
             
             drawBricks();
             drawPaddle();
+            drawTrampoline();
             drawPowerUps();
             drawLasers();
             
@@ -972,6 +1300,12 @@
             
             // Draw active power-up indicators
             drawPowerUpIndicators();
+            
+            // Draw level name
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'right';
+            ctx.fillText(levels[currentLevel - 1].name, canvas.width - 10, 20);
         }
         
         // Update game
@@ -990,23 +1324,28 @@
         }
         
         // Game over
+        // Game over
         function gameOver() {
             gameRunning = false;
+            gamePaused = true;
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            ctx.fillStyle = '#fff';
+            ctx.fillStyle = '#FF4500';
             ctx.font = 'bold 48px Arial';
             ctx.textAlign = 'center';
             ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
             
+            ctx.fillStyle = '#fff';
             ctx.font = '24px Arial';
             ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 30);
+            ctx.fillText('Press S or click Start to restart', canvas.width / 2, canvas.height / 2 + 70);
         }
         
         // Win game
         function winGame() {
             gameRunning = false;
+            gamePaused = true;
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
@@ -1017,7 +1356,9 @@
             
             ctx.fillStyle = '#fff';
             ctx.font = '24px Arial';
-            ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 + 30);
+            ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 30);
+            ctx.fillText('All levels completed!', canvas.width / 2, canvas.height / 2 + 70);
+            ctx.fillText('Press S or click Start to play again', canvas.width / 2, canvas.height / 2 + 110);
         }
         
         // Keyboard controls
@@ -1027,11 +1368,25 @@
             } else if (e.key === 'ArrowRight' || e.key === 'Right') {
                 paddle.dx = paddle.speed;
             } else if (e.key === 'p' || e.key === 'P') {
-                gamePaused = !gamePaused;
-                if (!gamePaused) update();
+                if (gameRunning) {
+                    gamePaused = !gamePaused;
+                    if (!gamePaused) update();
+                }
             } else if (e.key === ' ') {
                 e.preventDefault();
                 shootLaser();
+            } else if (e.key === 's' || e.key === 'S') {
+                // Restart game
+                document.getElementById('startBtn').click();
+            } else if (e.key >= '1' && e.key <= '4') {
+                // Debug: Jump to level 1-4
+                const targetLevel = parseInt(e.key);
+                if (targetLevel <= totalLevels) {
+                    currentLevel = targetLevel;
+                    score = 0;
+                    lives = 3;
+                    document.getElementById('startBtn').click();
+                }
             }
         });
         
@@ -1106,22 +1461,40 @@
         
         // Start button
         document.getElementById('startBtn').addEventListener('click', () => {
-            score = 0;
-            lives = 3;
+            // Determine if we should reset completely or continue
+            const shouldResetCompletely = (!gameRunning && !gamePaused) || 
+                                          (lives === 0);  // Game over - full reset
+            
+            if (shouldResetCompletely) {
+                // Full reset
+                currentLevel = 1;
+                score = 0;
+                lives = 3;
+            }
+            // Otherwise continuing to next level - keep score and lives
+            
             brickRowOffset = 0;
             ballLaunched = false;
             document.getElementById('score').textContent = score;
             document.getElementById('lives').textContent = lives;
             
+            // Update ball speed based on level
+            const level = levels[currentLevel - 1];
+            ballSpeed = level.speed;
+            document.getElementById('speedSlider').value = ballSpeed;
+            document.getElementById('speedValue').textContent = ballSpeed;
+            
             // Reset power-ups
             powerUps = [];
             balls = [];
             lasers = [];
+            trampoline = null;
             activePowerUps = {
                 laser: { active: false, endTime: 0 },
                 largeBall: { active: false, endTime: 0, originalRadius: 8 },
                 smallBall: { active: false, endTime: 0, originalRadius: 8 },
                 invincible: { active: false, endTime: 0 },
+                speedUp: { active: false, endTime: 0 },
                 bricksMoving: false
             };
             
